@@ -171,6 +171,7 @@ def test_config_merging():
         ignore_decorators=["cli_deco"],
         ignore_names=["cli_name"],
         ignore_attributes_for_classes=["cli_class_name"],
+        extra_sys_path=[],
         config="pyproject.toml",
         make_whitelist=True,
         min_confidence=20,

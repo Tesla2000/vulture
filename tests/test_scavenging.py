@@ -358,6 +358,25 @@ class MyTest(TestCase):
     check(v.unused_methods, [])
 
 
+def test_overridden_method_through_intermediate_class_not_unused(v):
+    """Overriding a method through an intermediate class
+    should not be reported as unused."""
+    v.scan(
+        """\
+from unittest import TestCase
+
+class IntermediateTest(TestCase):
+    pass
+
+class MyTest(IntermediateTest):
+    def setUp(self):
+        pass
+"""
+    )
+    # setUp overrides TestCase.setUp transitively via IntermediateTest
+    check(v.unused_methods, [])
+
+
 def test_method1(v):
     v.scan(
         """\

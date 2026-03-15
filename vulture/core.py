@@ -1,9 +1,11 @@
 import ast
+import importlib
 import pkgutil
 import re
 import string
 import sys
 from collections.abc import Container, Iterable
+from contextlib import suppress
 from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from itertools import chain
@@ -207,6 +209,7 @@ class Vulture(ast.NodeVisitor):
         ignore_names=None,
         ignore_decorators=None,
         ignore_class_attrs=None,
+        extra_sys_path=None,
     ):
         self.verbose = verbose
 
@@ -227,6 +230,7 @@ class Vulture(ast.NodeVisitor):
         self.ignore_names = ignore_names or []
         self.ignore_decorators = ignore_decorators or []
         self.ignore_class_attrs = ignore_class_attrs or []
+        self.extra_sys_path = extra_sys_path or []
 
         self._class_method_names: dict[str, frozenset[str]] = {}
         self._class_parents: dict[str, list[str]] = {}
@@ -576,25 +580,31 @@ class Vulture(ast.NodeVisitor):
             and not node.keywords
         )
 
-    @staticmethod
     def _get_external_class_methods(
-        module_name: str, class_name: str
+        self, module_name: str, class_name: str
     ) -> frozenset[str]:
-        import importlib
-
+        """Return non-dunder callable names of an external class.
+        Prepends extra_sys_path to sys.path so packages from a project venv
+        are discoverable (e.g. in pre-commit). Raises ImportError or
+        AttributeError if the module or class cannot be found."""
+        old_sys_path = sys.path[:]
+        sys.path = self.extra_sys_path + sys.path
         try:
             mod = importlib.import_module(module_name)
             cls = getattr(mod, class_name)
-            return frozenset(
+            methods = frozenset(
                 name
                 for name in dir(cls)
                 if callable(getattr(cls, name, None))
                 and not (name.startswith("__") and name.endswith("__"))
             )
-        except (ImportError, AttributeError):
-            return frozenset()
+            return methods
+        finally:
+            sys.path = old_sys_path
 
     def _get_base_class_methods(self, base_name: str) -> frozenset[str]:
+        """Return all method names from base_name's hierarchy.
+        Skips any external class that cannot be inspected."""
         result: set[str] = set()
         to_visit = [base_name]
         visited: set[str] = set()
@@ -608,9 +618,10 @@ class Vulture(ast.NodeVisitor):
                 to_visit.extend(self._class_parents.get(name, []))
             elif name in self._import_from_map:
                 module_name, class_name = self._import_from_map[name]
-                result |= self._get_external_class_methods(
-                    module_name, class_name
-                )
+                with suppress(ImportError, AttributeError):
+                    result |= self._get_external_class_methods(
+                        module_name, class_name
+                    )
         return frozenset(result)
 
     def visit_ClassDef(self, node):
@@ -629,8 +640,6 @@ class Vulture(ast.NodeVisitor):
             for target in elts or elem.targets:
                 yield from get_attrs(target)
 
-        # Build class method registry and
-        # remove override Items from defined_methods
         class_own_method_names = frozenset(
             elem.name
             for elem in node.body
@@ -642,27 +651,28 @@ class Vulture(ast.NodeVisitor):
         self._class_method_names[node.name] = class_own_method_names
         self._class_parents[node.name] = base_names
 
+        child_body_funcdefs = frozenset(
+            elem
+            for elem in node.body
+            if isinstance(elem, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
         all_base_method_names = frozenset(
             chain.from_iterable(
                 self._get_base_class_methods(b) for b in base_names
             )
         )
-        if all_base_method_names:
-            child_body_funcdefs = frozenset(
-                elem
-                for elem in node.body
-                if isinstance(elem, (ast.FunctionDef, ast.AsyncFunctionDef))
+
+        def is_override(item):
+            return (
+                item.node in child_body_funcdefs
+                and item.name in all_base_method_names
             )
+
+        if base_names:
             tuple(
                 map(
                     self.defined_methods.remove,
-                    filter(
-                        lambda item: (
-                            item.node in child_body_funcdefs
-                            and item.name in all_base_method_names
-                        ),
-                        tuple(self.defined_methods),
-                    ),
+                    filter(is_override, tuple(self.defined_methods)),
                 )
             )
 
@@ -701,7 +711,8 @@ class Vulture(ast.NodeVisitor):
             for decorator in node.decorator_list
         ]
 
-        first_arg = node.args.args[0].arg if node.args.args else None
+        all_args = node.args.posonlyargs + node.args.args
+        first_arg = all_args[0].arg if all_args else None
 
         if "@property" in decorator_names:
             typ = "property"
@@ -802,13 +813,23 @@ def main():
         print(e, file=sys.stderr)
         sys.exit(ExitCode.InvalidCmdlineArguments)
 
+    paths = config["paths"]
+    checked_root = Path(paths[0]).resolve() if paths else Path.cwd()
+    if not checked_root.is_dir():
+        checked_root = checked_root.parent
+    extra_sys_path = [
+        str(checked_root / p) if not Path(p).is_absolute() else p
+        for p in config["extra_sys_path"]
+    ]
+
     vulture = Vulture(
         verbose=config["verbose"],
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
         ignore_class_attrs=config["ignore_attributes_for_classes"],
+        extra_sys_path=extra_sys_path,
     )
-    vulture.scavenge(config["paths"], exclude=config["exclude"])
+    vulture.scavenge(paths, exclude=config["exclude"])
     sys.exit(
         vulture.report(
             min_confidence=config["min_confidence"],

@@ -23,6 +23,7 @@ DEFAULTS = {
     "ignore_decorators": [],
     "ignore_names": [],
     "ignore_attributes_for_classes": [],
+    "extra_sys_path": [],
     "make_whitelist": False,
     "sort_by_size": False,
     "verbose": False,
@@ -37,6 +38,7 @@ class _Config(TypedDict, total=False):
     ignore_decorators: list
     ignore_names: list
     ignore_attributes_for_classes: list
+    extra_sys_path: list
     make_whitelist: bool
     sort_by_size: bool
     verbose: bool
@@ -162,6 +164,15 @@ def _parse_args(args=None):
         default=missing,
         help=f"Comma-separated list of class names to ignore (e.g., "
         f' visit_*,do_*"). {glob_help}',
+    )
+    parser.add_argument(
+        "--extra-sys-path",
+        metavar="PATHS",
+        type=csv,
+        default=missing,
+        help="Comma-separated list of paths to add to sys.path when inspecting"
+        " external base classes for override detection (e.g., path to a"
+        " virtualenv's site-packages).",
     )
     parser.add_argument(
         "--make-whitelist",
