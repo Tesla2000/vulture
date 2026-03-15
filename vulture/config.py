@@ -23,7 +23,7 @@ DEFAULTS = {
     "ignore_decorators": [],
     "ignore_names": [],
     "ignore_attributes_for_classes": [],
-    "extra_sys_path": [],
+    "extra_sys_paths": [],
     "make_whitelist": False,
     "sort_by_size": False,
     "verbose": False,
@@ -38,7 +38,7 @@ class _Config(TypedDict, total=False):
     ignore_decorators: list
     ignore_names: list
     ignore_attributes_for_classes: list
-    extra_sys_path: list
+    extra_sys_paths: list
     make_whitelist: bool
     sort_by_size: bool
     verbose: bool
@@ -166,7 +166,7 @@ def _parse_args(args=None):
         f' visit_*,do_*"). {glob_help}',
     )
     parser.add_argument(
-        "--extra-sys-path",
+        "--extra-sys-paths",
         metavar="PATHS",
         type=csv,
         default=missing,

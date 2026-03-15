@@ -5,7 +5,6 @@ import re
 import string
 import sys
 from collections.abc import Container, Iterable
-from contextlib import suppress
 from fnmatch import fnmatch, fnmatchcase
 from functools import partial
 from itertools import chain
@@ -209,7 +208,7 @@ class Vulture(ast.NodeVisitor):
         ignore_names=None,
         ignore_decorators=None,
         ignore_class_attrs=None,
-        extra_sys_path=None,
+        extra_sys_paths=None,
     ):
         self.verbose = verbose
 
@@ -230,7 +229,7 @@ class Vulture(ast.NodeVisitor):
         self.ignore_names = ignore_names or []
         self.ignore_decorators = ignore_decorators or []
         self.ignore_class_attrs = ignore_class_attrs or []
-        self.extra_sys_path = extra_sys_path or []
+        self.extra_sys_paths = extra_sys_paths or []
 
         self._class_method_names: dict[str, frozenset[str]] = {}
         self._class_parents: dict[str, list[str]] = {}
@@ -584,11 +583,11 @@ class Vulture(ast.NodeVisitor):
         self, module_name: str, class_name: str
     ) -> frozenset[str]:
         """Return non-dunder callable names of an external class.
-        Prepends extra_sys_path to sys.path so packages from a project venv
+        Prepends extra_sys_paths to sys.path so packages from a project venv
         are discoverable (e.g. in pre-commit). Raises ImportError or
         AttributeError if the module or class cannot be found."""
         old_sys_path = sys.path[:]
-        sys.path = self.extra_sys_path + sys.path
+        sys.path = self.extra_sys_paths + sys.path
         try:
             mod = importlib.import_module(module_name)
             cls = getattr(mod, class_name)
@@ -618,10 +617,9 @@ class Vulture(ast.NodeVisitor):
                 to_visit.extend(self._class_parents.get(name, []))
             elif name in self._import_from_map:
                 module_name, class_name = self._import_from_map[name]
-                with suppress(ImportError, AttributeError):
-                    result |= self._get_external_class_methods(
-                        module_name, class_name
-                    )
+                result |= self._get_external_class_methods(
+                    module_name, class_name
+                )
         return frozenset(result)
 
     def visit_ClassDef(self, node):
@@ -817,9 +815,9 @@ def main():
     checked_root = Path(paths[0]).resolve() if paths else Path.cwd()
     if not checked_root.is_dir():
         checked_root = checked_root.parent
-    extra_sys_path = [
+    extra_sys_paths = [
         str(checked_root / p) if not Path(p).is_absolute() else p
-        for p in config["extra_sys_path"]
+        for p in config["extra_sys_paths"]
     ]
 
     vulture = Vulture(
@@ -827,7 +825,7 @@ def main():
         ignore_names=config["ignore_names"],
         ignore_decorators=config["ignore_decorators"],
         ignore_class_attrs=config["ignore_attributes_for_classes"],
-        extra_sys_path=extra_sys_path,
+        extra_sys_paths=extra_sys_paths,
     )
     vulture.scavenge(paths, exclude=config["exclude"])
     sys.exit(
