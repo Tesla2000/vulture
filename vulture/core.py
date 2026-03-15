@@ -228,6 +228,10 @@ class Vulture(ast.NodeVisitor):
         self.ignore_decorators = ignore_decorators or []
         self.ignore_class_attrs = ignore_class_attrs or []
 
+        self._class_method_names: dict[str, frozenset[str]] = {}
+        self._class_parents: dict[str, list[str]] = {}
+        self._import_from_map: dict[str, tuple[str, str]] = {}
+
         self.filename = Path()
         self.code = []
         self.exit_code = ExitCode.NoDeadCode
@@ -438,6 +442,14 @@ class Vulture(ast.NodeVisitor):
             )
             if alias is not None:
                 self.used_names.add(name_and_alias.name)
+            if isinstance(node, ast.ImportFrom) and node.module:
+                local_name = (
+                    alias if alias is not None else name_and_alias.name
+                )
+                self._import_from_map[local_name] = (
+                    node.module,
+                    name_and_alias.name,
+                )
 
     def _define(
         self,
@@ -564,6 +576,43 @@ class Vulture(ast.NodeVisitor):
             and not node.keywords
         )
 
+    @staticmethod
+    def _get_external_class_methods(
+        module_name: str, class_name: str
+    ) -> frozenset[str]:
+        import importlib
+
+        try:
+            mod = importlib.import_module(module_name)
+            cls = getattr(mod, class_name)
+            return frozenset(
+                name
+                for name in dir(cls)
+                if callable(getattr(cls, name, None))
+                and not (name.startswith("__") and name.endswith("__"))
+            )
+        except (ImportError, AttributeError):
+            return frozenset()
+
+    def _get_base_class_methods(self, base_name: str) -> frozenset[str]:
+        result: set[str] = set()
+        to_visit = [base_name]
+        visited: set[str] = set()
+        while to_visit:
+            name = to_visit.pop()
+            if name in visited:
+                continue
+            visited.add(name)
+            if name in self._class_method_names:
+                result |= self._class_method_names[name]
+                to_visit.extend(self._class_parents.get(name, []))
+            elif name in self._import_from_map:
+                module_name, class_name = self._import_from_map[name]
+                result |= self._get_external_class_methods(
+                    module_name, class_name
+                )
+        return frozenset(result)
+
     def visit_ClassDef(self, node):
         def get_attrs(elem) -> Iterable[ast.Name]:
             if isinstance(elem, ast.Name):
@@ -579,6 +628,43 @@ class Vulture(ast.NodeVisitor):
                 elts = elem.elts
             for target in elts or elem.targets:
                 yield from get_attrs(target)
+
+        # Build class method registry and
+        # remove override Items from defined_methods
+        class_own_method_names = frozenset(
+            elem.name
+            for elem in node.body
+            if isinstance(elem, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+        base_names = [
+            base.id for base in node.bases if isinstance(base, ast.Name)
+        ]
+        self._class_method_names[node.name] = class_own_method_names
+        self._class_parents[node.name] = base_names
+
+        all_base_method_names = frozenset(
+            chain.from_iterable(
+                self._get_base_class_methods(b) for b in base_names
+            )
+        )
+        if all_base_method_names:
+            child_body_funcdefs = frozenset(
+                elem
+                for elem in node.body
+                if isinstance(elem, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+            tuple(
+                map(
+                    self.defined_methods.remove,
+                    filter(
+                        lambda item: (
+                            item.node in child_body_funcdefs
+                            and item.name in all_base_method_names
+                        ),
+                        tuple(self.defined_methods),
+                    ),
+                )
+            )
 
         if any(
             re.findall(pattern, node.name)

@@ -324,6 +324,40 @@ class Foo(object):
     check(v.unused_classes, ["Foo"])
 
 
+def test_overridden_method_not_unused(v):
+    """Overriding a base class method should not be reported as unused."""
+    v.scan(
+        """\
+class Base:
+    def method(self):
+        pass
+
+class Child(Base):
+    def method(self):
+        pass
+"""
+    )
+    # Child.method is removed from defined_methods as it's an override
+    check(v.defined_methods, ["method"])
+    check(v.unused_methods, ["method"])
+
+
+def test_overridden_external_method_not_unused(v):
+    """Overriding a method from an external (stdlib) base class
+    should not be reported as unused."""
+    v.scan(
+        """\
+from unittest import TestCase
+
+class MyTest(TestCase):
+    def setUp(self):
+        pass
+"""
+    )
+    # setUp overrides TestCase.setUp, so it should not be reported as unused
+    check(v.unused_methods, [])
+
+
 def test_method1(v):
     v.scan(
         """\
