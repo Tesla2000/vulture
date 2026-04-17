@@ -626,9 +626,15 @@ class Vulture(ast.NodeVisitor):
                 to_visit.extend(self._class_parents.get(name, []))
             elif name in self._import_from_map:
                 module_name, class_name = self._import_from_map[name]
-                result |= self._get_external_class_methods(
-                    module_name, class_name
-                )
+                try:
+                    result |= self._get_external_class_methods(
+                        module_name, class_name
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Error getting external class methods {e} "
+                        f"for {module_name=} {class_name=}"
+                    ) from e
         return frozenset(result)
 
     def _get_attr_base_methods(
