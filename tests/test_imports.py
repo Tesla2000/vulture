@@ -296,6 +296,17 @@ define.__all__ = ["Foo"]
     check(v.unused_imports, ["Foo", "Bar"])
 
 
+def test_relative_imports_excluded_from_import_from_map(v):
+    v.scan(
+        """\
+from . import utils
+from .models import User
+from ..base import Config
+"""
+    )
+    assert not v._import_from_map
+
+
 def test_ignore_init_py_files(v):
     v.scan(
         """\

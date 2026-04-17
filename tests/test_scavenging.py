@@ -377,6 +377,55 @@ class MyTest(IntermediateTest):
     check(v.unused_methods, [])
 
 
+def test_overridden_attr_base_method_direct_import_not_unused(v):
+    """Overriding a method from an attr-style base (
+    `import mod; class Foo(mod.Class)`)
+    should not be reported as unused."""
+    v.scan(
+        """\
+import ast
+
+class Visitor(ast.NodeVisitor):
+    def visit(self, node):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
+def test_overridden_attr_base_method_aliased_import_not_unused(v):
+    """Overriding a method from an attr-style base with an aliased import
+    (`import mod as m; class Foo(m.Class)`) should not be reported as unused.
+    """
+    v.scan(
+        """\
+import ast as a
+
+class Visitor(a.NodeVisitor):
+    def visit(self, node):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
+def test_overridden_attr_base_method_from_import_module_not_unused(v):
+    """Overriding a method from an attr-style base where the module was
+    imported via
+    `from pkg import submodule; class Foo(submodule.Class)`
+    should not be reported."""
+    v.scan(
+        """\
+from html import parser
+
+class MyParser(parser.HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
 def test_method1(v):
     v.scan(
         """\

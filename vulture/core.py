@@ -234,6 +234,7 @@ class Vulture(ast.NodeVisitor):
         self._class_method_names: dict[str, frozenset[str]] = {}
         self._class_parents: dict[str, list[str]] = {}
         self._import_from_map: dict[str, tuple[str, str]] = {}
+        self._import_map: dict[str, str] = {}
 
         self.filename = Path()
         self.code = []
@@ -445,13 +446,21 @@ class Vulture(ast.NodeVisitor):
             )
             if alias is not None:
                 self.used_names.add(name_and_alias.name)
-            if isinstance(node, ast.ImportFrom) and node.module:
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.level == 0
+            ):
                 local_name = (
                     alias if alias is not None else name_and_alias.name
                 )
                 self._import_from_map[local_name] = (
                     node.module,
                     name_and_alias.name,
+                )
+            elif isinstance(node, ast.Import):
+                self._import_map[alias if alias is not None else name] = (
+                    name_and_alias.name
                 )
 
     def _define(
@@ -622,6 +631,23 @@ class Vulture(ast.NodeVisitor):
                 )
         return frozenset(result)
 
+    def _get_attr_base_methods(
+        self, module_alias: str, class_name: str
+    ) -> frozenset[str]:
+        """Handle base classes like cst.Transformer
+        where module_alias is imported."""
+        if module_alias in self._import_map:
+            module_name = self._import_map[module_alias]
+        elif module_alias in self._import_from_map:
+            parent_module, imported_name = self._import_from_map[module_alias]
+            module_name = f"{parent_module}.{imported_name}"
+        else:
+            return frozenset()
+        try:
+            return self._get_external_class_methods(module_name, class_name)
+        except (ImportError, AttributeError):
+            return frozenset()
+
     def visit_ClassDef(self, node):
         def get_attrs(elem) -> Iterable[ast.Name]:
             if isinstance(elem, ast.Name):
@@ -646,6 +672,12 @@ class Vulture(ast.NodeVisitor):
         base_names = [
             base.id for base in node.bases if isinstance(base, ast.Name)
         ]
+        attr_bases = [
+            (base.value.id, base.attr)
+            for base in node.bases
+            if isinstance(base, ast.Attribute)
+            and isinstance(base.value, ast.Name)
+        ]
         self._class_method_names[node.name] = class_own_method_names
         self._class_parents[node.name] = base_names
 
@@ -658,6 +690,10 @@ class Vulture(ast.NodeVisitor):
             chain.from_iterable(
                 self._get_base_class_methods(b) for b in base_names
             )
+        ) | frozenset(
+            chain.from_iterable(
+                self._get_attr_base_methods(m, c) for m, c in attr_bases
+            )
         )
 
         def is_override(item):
@@ -666,7 +702,7 @@ class Vulture(ast.NodeVisitor):
                 and item.name in all_base_method_names
             )
 
-        if base_names:
+        if base_names or attr_bases:
             tuple(
                 map(
                     self.defined_methods.remove,
