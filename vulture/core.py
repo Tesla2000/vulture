@@ -655,36 +655,32 @@ class Vulture(ast.NodeVisitor):
     ) -> frozenset[str]:
         """Handle base classes like cst.Transformer
         where module_alias is imported."""
-        if module_alias in self._import_map:
-            module_name = self._import_map[module_alias]
-            try:
-                return self._get_external_class_methods(
-                    module_name, class_name
-                )
-            except (ImportError, AttributeError) as e:
-                raise RuntimeError(
-                    f"{utils.format_path(self.filename)}: "
-                    f"Cannot inspect {class_name!r} from {module_name!r}: {e}"
-                ) from e
+        candidates = [
+            *(
+                [self._import_map[module_alias]]
+                if module_alias in self._import_map
+                else []
+            ),
+            *(
+                f"{parent}.{name}"
+                for parent, name in self._import_from_map.get(module_alias, [])
+            ),
+        ]
+        if not candidates:
+            return frozenset()
         last_exc: Exception | None = None
         last_module = ""
-        for parent_module, imported_name in self._import_from_map.get(
-            module_alias, []
-        ):
-            module_name = f"{parent_module}.{imported_name}"
+        for module_name in candidates:
             try:
                 return self._get_external_class_methods(
                     module_name, class_name
                 )
             except (ImportError, AttributeError) as e:
                 last_exc, last_module = e, module_name
-        if last_exc is not None:
-            raise RuntimeError(
-                f"{utils.format_path(self.filename)}: "
-                f"Cannot inspect {class_name!r} from "
-                f"{last_module!r}: {last_exc}"
-            ) from last_exc
-        return frozenset()
+        raise RuntimeError(
+            f"{utils.format_path(self.filename)}: "
+            f"Cannot inspect {class_name!r} from {last_module!r}: {last_exc}"
+        ) from last_exc
 
     def visit_ClassDef(self, node):
         def get_attrs(elem) -> Iterable[ast.Name]:

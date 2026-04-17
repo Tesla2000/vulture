@@ -397,6 +397,27 @@ class MyMapping(Mapping):
     check(v.unused_methods, [])
 
 
+def test_overridden_attr_base_name_collision_falls_back_to_from_import(v):
+    """When `import X` and `from pkg import X` both bind the same local name,
+    and the `import X` candidate fails (ImportError/AttributeError), vulture
+    should fall through to the `from pkg import X` candidate.
+
+    Uses `import parser` (removed in Python 3.9, always fails at analysis time)
+    alongside `from html import parser` to force the fallback path.
+    """
+    v.scan(
+        """\
+import parser
+from html import parser
+
+class MyParser(parser.HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
 def test_overridden_attr_base_method_direct_import_not_unused(v):
     """Overriding a method from an attr-style base (
     `import mod; class Foo(mod.Class)`)
