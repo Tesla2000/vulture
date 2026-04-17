@@ -307,6 +307,21 @@ from ..base import Config
     assert not v._import_from_map
 
 
+def test_try_except_import_stores_both_candidates(v):
+    v.scan(
+        """\
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
+"""
+    )
+    assert "Mapping" in v._import_from_map
+    assert len(v._import_from_map["Mapping"]) == 2
+    assert ("collections.abc", "Mapping") in v._import_from_map["Mapping"]
+    assert ("collections", "Mapping") in v._import_from_map["Mapping"]
+
+
 def test_ignore_init_py_files(v):
     v.scan(
         """\

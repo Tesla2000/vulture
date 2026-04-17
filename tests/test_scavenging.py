@@ -377,6 +377,26 @@ class MyTest(IntermediateTest):
     check(v.unused_methods, [])
 
 
+def test_overridden_method_try_except_import_not_unused(v):
+    """Overriding a method from a base class imported via try/except
+    ImportError should not be reported as unused; the first resolvable
+    candidate is used.
+    """
+    v.scan(
+        """\
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
+
+class MyMapping(Mapping):
+    def get(self, key, default=None):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
 def test_overridden_attr_base_method_direct_import_not_unused(v):
     """Overriding a method from an attr-style base (
     `import mod; class Foo(mod.Class)`)

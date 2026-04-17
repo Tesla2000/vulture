@@ -4,6 +4,7 @@ import pkgutil
 import re
 import string
 import sys
+from collections import defaultdict
 from collections.abc import Container, Iterable
 from fnmatch import fnmatch, fnmatchcase
 from functools import partial
@@ -233,7 +234,9 @@ class Vulture(ast.NodeVisitor):
 
         self._class_method_names: dict[str, frozenset[str]] = {}
         self._class_parents: dict[str, list[str]] = {}
-        self._import_from_map: dict[str, tuple[str, str]] = {}
+        self._import_from_map: defaultdict[str, list[tuple[str, str]]] = (
+            defaultdict(list)
+        )
         self._import_map: dict[str, str] = {}
 
         self.filename = Path()
@@ -454,9 +457,8 @@ class Vulture(ast.NodeVisitor):
                 local_name = (
                     alias if alias is not None else name_and_alias.name
                 )
-                self._import_from_map[local_name] = (
-                    node.module,
-                    name_and_alias.name,
+                self._import_from_map[local_name].append(
+                    (node.module, name_and_alias.name)
                 )
             elif isinstance(node, ast.Import):
                 self._import_map[alias if alias is not None else name] = (
@@ -625,16 +627,27 @@ class Vulture(ast.NodeVisitor):
                 result |= self._class_method_names[name]
                 to_visit.extend(self._class_parents.get(name, []))
             elif name in self._import_from_map:
-                module_name, class_name = self._import_from_map[name]
-                try:
-                    result |= self._get_external_class_methods(
-                        module_name, class_name
-                    )
-                except Exception as e:
+                last_exc: Exception | None = None
+                last_module = last_class = ""
+                for module_name, class_name in self._import_from_map[name]:
+                    try:
+                        result |= self._get_external_class_methods(
+                            module_name, class_name
+                        )
+                        last_exc = None
+                        break
+                    except (ImportError, AttributeError) as e:
+                        last_exc, last_module, last_class = (
+                            e,
+                            module_name,
+                            class_name,
+                        )
+                if last_exc is not None:
                     raise RuntimeError(
-                        f"Error getting external class methods {e} "
-                        f"for {module_name=} {class_name=}"
-                    ) from e
+                        f"{utils.format_path(self.filename)}: "
+                        f"Cannot inspect {last_class!r} from {last_module!r}: "
+                        f"{last_exc}"
+                    ) from last_exc
         return frozenset(result)
 
     def _get_attr_base_methods(
@@ -644,15 +657,34 @@ class Vulture(ast.NodeVisitor):
         where module_alias is imported."""
         if module_alias in self._import_map:
             module_name = self._import_map[module_alias]
-        elif module_alias in self._import_from_map:
-            parent_module, imported_name = self._import_from_map[module_alias]
+            try:
+                return self._get_external_class_methods(
+                    module_name, class_name
+                )
+            except (ImportError, AttributeError) as e:
+                raise RuntimeError(
+                    f"{utils.format_path(self.filename)}: "
+                    f"Cannot inspect {class_name!r} from {module_name!r}: {e}"
+                ) from e
+        last_exc: Exception | None = None
+        last_module = ""
+        for parent_module, imported_name in self._import_from_map.get(
+            module_alias, []
+        ):
             module_name = f"{parent_module}.{imported_name}"
-        else:
-            return frozenset()
-        try:
-            return self._get_external_class_methods(module_name, class_name)
-        except (ImportError, AttributeError):
-            return frozenset()
+            try:
+                return self._get_external_class_methods(
+                    module_name, class_name
+                )
+            except (ImportError, AttributeError) as e:
+                last_exc, last_module = e, module_name
+        if last_exc is not None:
+            raise RuntimeError(
+                f"{utils.format_path(self.filename)}: "
+                f"Cannot inspect {class_name!r} from "
+                f"{last_module!r}: {last_exc}"
+            ) from last_exc
+        return frozenset()
 
     def visit_ClassDef(self, node):
         def get_attrs(elem) -> Iterable[ast.Name]:
