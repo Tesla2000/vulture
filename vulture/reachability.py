@@ -8,18 +8,10 @@ class Reachability:
         self._report = report
         self._no_fall_through_nodes = set()
 
-        # Since we visit the children nodes first, we need to maintain a flag
-        # that indicates if a break statement was seen. When visiting the
-        # parent (While, For or AsyncFor), the value is checked (for While)
-        # and reset. Assumes code is valid (break statements only in loops).
-        self._current_loop_has_break_statement = False
-
     def visit(self, node):
         """When called, all children of this node have already been visited."""
         if isinstance(node, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
             self._mark_as_no_fall_through(node)
-            if isinstance(node, ast.Break):
-                self._current_loop_has_break_statement = True
 
         elif isinstance(
             node,
@@ -34,10 +26,8 @@ class Reachability:
             self._can_fall_through_statements_analysis(node.body)
         elif isinstance(node, ast.While):
             self._handle_reachability_while(node)
-            self._current_loop_has_break_statement = False
         elif isinstance(node, (ast.For, ast.AsyncFor)):
             self._can_fall_through_statements_analysis(node.body)
-            self._current_loop_has_break_statement = False
         elif isinstance(node, ast.If):
             self._handle_reachability_if(node)
         elif isinstance(node, ast.IfExp):
@@ -60,15 +50,11 @@ class Reachability:
         """
         for idx, statement in enumerate(statements):
             if not self._can_fall_through(statement):
-                try:
-                    next_sibling = statements[idx + 1]
-                except IndexError:
-                    next_sibling = None
-                if next_sibling is not None:
+                if idx + 1 < len(statements):
                     class_name = statement.__class__.__name__.lower()
                     self._report(
                         name=class_name,
-                        first_node=next_sibling,
+                        first_node=statements[idx + 1],
                         last_node=statements[-1],
                         message=f"unreachable code after '{class_name}'",
                     )
@@ -82,9 +68,7 @@ class Reachability:
             self._report(
                 name="if",
                 first_node=node,
-                last_node=node.body
-                if isinstance(node, ast.IfExp)
-                else node.body[-1],
+                last_node=node.body[-1],
                 message="unsatisfiable 'if' condition",
             )
             if_can_fall_through = True
@@ -139,9 +123,7 @@ class Reachability:
             self._report(
                 name="ternary",
                 first_node=node,
-                last_node=node.body
-                if isinstance(node, ast.IfExp)
-                else node.body[-1],
+                last_node=node.body,
                 message="unsatisfiable 'ternary' condition",
             )
         elif utils.condition_is_always_true(node.test):
@@ -157,9 +139,7 @@ class Reachability:
             self._report(
                 name="while",
                 first_node=node,
-                last_node=node.body
-                if isinstance(node, ast.IfExp)
-                else node.body[-1],
+                last_node=node.body[-1],
                 message="unsatisfiable 'while' condition",
             )
 
@@ -173,10 +153,43 @@ class Reachability:
                     message="unreachable 'else' block",
                 )
 
-            if not self._current_loop_has_break_statement:
+            if not self._body_has_break(node.body):
                 self._mark_as_no_fall_through(node)
 
         self._can_fall_through_statements_analysis(node.body)
+
+    @staticmethod
+    def _body_has_break(stmts):
+        """Return True if stmts contain a break that exits the current loop.
+
+        Does not recurse into nested loops or new function/class scopes, since
+        break statements inside those do not affect the enclosing loop.
+        """
+        for stmt in stmts:
+            if isinstance(stmt, ast.Break):
+                return True
+            if isinstance(
+                stmt,
+                (
+                    ast.While,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                ),
+            ):
+                continue
+            child_stmts = [
+                item
+                for _, field in ast.iter_fields(stmt)
+                if isinstance(field, list)
+                for item in field
+                if isinstance(item, ast.AST)
+            ]
+            if Reachability._body_has_break(child_stmts):
+                return True
+        return False
 
     def _handle_reachability_try(self, node):
         try_can_fall_through = self._can_fall_through_statements_analysis(
