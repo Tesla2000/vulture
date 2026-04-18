@@ -377,6 +377,96 @@ class MyTest(IntermediateTest):
     check(v.unused_methods, [])
 
 
+def test_overridden_method_try_except_import_not_unused(v):
+    """Overriding a method from a base class imported via try/except
+    ImportError should not be reported as unused; the first resolvable
+    candidate is used.
+    """
+    v.scan(
+        """\
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
+
+class MyMapping(Mapping):
+    def get(self, key, default=None):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
+def test_overridden_attr_base_name_collision_falls_back_to_from_import(v):
+    """When `import X` and `from pkg import X` both bind the same local name,
+    and the `import X` candidate fails (ImportError/AttributeError), vulture
+    should fall through to the `from pkg import X` candidate.
+
+    Uses `import parser` (removed in Python 3.9, always fails at analysis time)
+    alongside `from html import parser` to force the fallback path.
+    """
+    v.scan(
+        """\
+import parser
+from html import parser
+
+class MyParser(parser.HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
+def test_overridden_attr_base_method_direct_import_not_unused(v):
+    """Overriding a method from an attr-style base (
+    `import mod; class Foo(mod.Class)`)
+    should not be reported as unused."""
+    v.scan(
+        """\
+import ast
+
+class Visitor(ast.NodeVisitor):
+    def visit(self, node):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
+def test_overridden_attr_base_method_aliased_import_not_unused(v):
+    """Overriding a method from an attr-style base with an aliased import
+    (`import mod as m; class Foo(m.Class)`) should not be reported as unused.
+    """
+    v.scan(
+        """\
+import ast as a
+
+class Visitor(a.NodeVisitor):
+    def visit(self, node):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
+def test_overridden_attr_base_method_from_import_module_not_unused(v):
+    """Overriding a method from an attr-style base where the module was
+    imported via
+    `from pkg import submodule; class Foo(submodule.Class)`
+    should not be reported."""
+    v.scan(
+        """\
+from html import parser
+
+class MyParser(parser.HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        pass
+"""
+    )
+    check(v.unused_methods, [])
+
+
 def test_method1(v):
     v.scan(
         """\
